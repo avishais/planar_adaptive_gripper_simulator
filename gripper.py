@@ -5,38 +5,53 @@ import numpy as np
 from matrices import get_matrices
 import time
 from gym.envs.classic_control import rendering
+import matplotlib.pyplot as plt
 
 
 class AdaptiveGripperEnv():
 
     # Gripper properties
-    m_link = 1 # Links masss
+    m_link = 10 # Links masss
     K = np.array([1, 2]) # Finger spring coefficients
     c = np.array([20, 20]) # Natural damping of the joints
     l_links = np.array([0.6, 0.4]) # Lengths of the two links of a finger
     a = np.array([-0.2+0.0305, 0.2-0.0305]) # First joints position on the base
     z = np.deg2rad([30, -5, -30, 5]) # Springs pre-loading angles of the joints
 
-    # Fail criteria
-    u_min = 0.1
-    f_max = 18
-
     # Object properties
-    mo = 1 # Object mass
+    mo = 10 # Object mass
     Io = 1 # Object inertia
     ro = 0.1 # Object radius
 
+
+    # Fail criteria
+    u_min = 0.1
+    u_max = 95
+    f_max = 950.
+    f_min = -1#5.
+    actuator_angle_bound = np.array([0,1]) # Normalized
+
+
     R = np.array([[-1, 0], [-0.5, 0], [0, 1], [0, 0.5]])/10 # Maps tendon forces to joint torques
-    Q = np.array([[f_max*1.11115, 0], [0, f_max*1.11115]]) # Maps actuator angles to tendon forces
+    Q = np.array([[200, 0], [0, 200]]) # Maps actuator angles to tendon forces
+    A = np.array([[1, 1], [-1, -1], [-1, 1], [1, -1], [0, -1], [0, 1], [-1, 0], [1, 0], [0, 0]])*0.0001 # Set of possible_actions
 
     n = 14
     dt = 0.01
     x = None #np.zeros((n,1))
+    tendon_forces = None # Current forces on the tendons
+    thetas = None # Actuators angles
     t = 0
-
+    done = False
     ee = None
+    constraint = None
 
-    EulerOrRK = 1
+    EulerOrRK = 'Euler'#'RK'
+    system_reset = False
+
+    track_state = []
+    track_T = []
+    track_f = []
 
     def __init__(self):
 
@@ -44,13 +59,33 @@ class AdaptiveGripperEnv():
 
         self.viewer = None
 
-    def ODEfunc(self, t, x):
+    def reset(self):
+
+        if not self.system_reset:
+            # self.x = np.concatenate( (np.deg2rad(np.array([-0, -10, 0, 10])), np.array([0, 0.9939, 0, 0, 0, 0, 0, 0, 0, 0])), axis=0 ) # [q1 q2 q1 q2 x y th dq1 dq2 dq1 dq2 dx dy dth]
+            self.x = np.array([0.116946826907781,	-0.473091924745941,	-0.116946826907779,	0.473091924745943,	0,	0.970793044282852,	0,	0,	0,	0,	0,	0,	0,	0]) # [q1 q2 q1 q2 x y th dq1 dq2 dq1 dq2 dx dy dth]
+            self.tendon_forces = np.array([0.0, 0.0])
+            self.thetas = np.array([0.03,0.03])
+
+            self.t = 0
+            self.done = False
+            self.system_reset = True
+
+            self.track_state = []
+            self.track_f = []
+            self.track_T = []
+
+            print('Gripper initialized.')
+
+    def ODEfunc(self, t, x, dthetas):
 
         Dt, Ct, Gt, Ft, Gmap, self.ee, Jee, dJG = get_matrices(x, self.l_links, self.m_link, self.mo, self.Io, self.ro, self.c, self.K, self.z, self.a)
 
-        f = np.array([100, 150]).reshape(2,1)
-        u = self.R.dot( f )
-
+        self.thetas += dthetas
+        
+        self.tendon_forces = self.Q.dot(self.thetas.reshape((2,1)))
+        u = self.R.dot( self.tendon_forces )
+        
         ddx = np.linalg.inv(Dt).dot( Ft.dot(u) - Ct.dot(x[self.n-3:self.n].reshape(3,1)) - Gt ) 
 
         dx = np.zeros((self.n,1))
@@ -58,35 +93,48 @@ class AdaptiveGripperEnv():
         dx[7:11] = dJG.dot(x[self.n-3:self.n].reshape(3,1)) + np.linalg.inv(Jee).dot( np.transpose(Gmap).dot(ddx) )#
         dx[11:] = ddx
 
-        return dx
+        # self.constraint = Jee.dot(dx[7:11].reshape(4,1)) - np.transpose(Gmap).dot(dx[11:].reshape(3,1))
 
-    def reset(self):
-        self.x = np.concatenate( (np.deg2rad(np.array([-0, -10, 0, 10])), np.array([0, 0.9939, 0, 0, 0, 0, 0, 0, 0, 0])), axis=0 ) # [q1 q2 q1 q2 dq1 dq2 dq1 dq2 x y th dx dy dth]
-        self.t = 0
+        # print(self.thetas.reshape((-1,2)), self.tendon_forces.reshape(-1,2), u.reshape(-1,4))
+        return dx
         
 
     def step(self, action=0):
+        self.system_reset = False
 
-        if not self.EulerOrRK: # Euler method
-            df = self.ODEfunc(self.t, self.x)
+        dthetas = self.A[action]
 
-            self.x = self.x.reshape((14,1)) + df * self.dt
+        for i in range(2): # Each step is 2*dt time
+            if self.EulerOrRK == 'Euler': # Euler method
+                df = self.ODEfunc(self.t, self.x, dthetas)
 
-        else: # Runga-Kutta method
-            k1 = self.dt*self.ODEfunc(self.t, self.x)
-            k2 = self.dt*self.ODEfunc(self.t+self.dt/2, self.x.reshape((14,1))+k1/2)
-            k3 = self.dt*self.ODEfunc(self.t+self.dt/2, self.x.reshape((14,1))+k2/2)
-            k4 = self.dt*self.ODEfunc(self.t+self.dt, self.x.reshape((14,1))+k3)
+                self.x = self.x.reshape((14,1)) + df * self.dt
 
-            self.x = self.x.reshape((14,1)) + 1/6. * (k1 + 2*k2 + 2*k3 + k4)
+            else: # Runga-Kutta method
+                k1 = self.dt*self.ODEfunc(self.t, self.x, dthetas)
+                k2 = self.dt*self.ODEfunc(self.t+self.dt/2, self.x.reshape((14,1))+k1/2, dthetas)
+                k3 = self.dt*self.ODEfunc(self.t+self.dt/2, self.x.reshape((14,1))+k2/2, dthetas)
+                k4 = self.dt*self.ODEfunc(self.t+self.dt, self.x.reshape((14,1))+k3, dthetas)
 
-        self.t += self.dt
+                self.x = self.x.reshape((self.n,1)) + 1/6. * (k1 + 2*k2 + 2*k3 + k4)
 
-        return self.observe()
+            self.t += self.dt
+
+        d = np.linalg.norm(self.ee[:,1]-self.ee[:,3]) # Distance between finger-tips
+
+        if any( self.tendon_forces > self.f_max ) or any( self.tendon_forces < self.f_min ) or ( d > 2.25*self.ro ):# or any( np.abs(self.constraint) > 0.4 ):
+            self.done = True
+
+        self.track_state.append(self.x)
+        self.track_T.append(self.t)
+        self.track_f.append(self.tendon_forces)
+
+        print(self.t, self.thetas.reshape((-1,2)), self.observe().reshape(-1,5), d)
+        return self.observe(), self.done
 
     def observe(self):
 
-        return self.x[4:7]
+        return np.concatenate((self.x[4:7], self.tendon_forces), axis=0)
 
     def render(self):
         screen_width = 600
@@ -201,12 +249,15 @@ class AdaptiveGripperEnv():
             # self.viewer.add_geom(self.track)
 
         if self.x is None: return None
-
         
         x = self.observe()
-        self.cyltrans.set_translation(x[0]*scale+c[0], x[1]*scale+c[1])
+        if not self.done:
+            self.cyltrans.set_translation(x[0]*scale+c[0], x[1]*scale+c[1])
+        else:
+            self.cyltrans.set_translation(x[0]*scale*100+c[0], x[1]*scale*100+c[1])
         self.patchtrans.set_translation(0,0)
         self.patchtrans.set_rotation(x[2])
+
         self.j0ltrans.set_translation(self.a[0]*scale+c[0],c[1])
         self.j0rtrans.set_translation(self.a[1]*scale+c[0],c[1])
         self.j1trans.set_translation(self.ee[0][0]*scale+c[0],self.ee[1][0]*scale+c[1])
@@ -226,16 +277,101 @@ class AdaptiveGripperEnv():
     def close(self):
         if self.viewer: self.viewer.close()
 
+    def key_control(self):
+
+        import curses
+        screen = curses.initscr()
+        curses.cbreak()
+        screen.keypad(1)
+
+        screen.addstr("Enter j to quit ")
+        screen.refresh()
+
+        k = ''
+
+        while k != ord('j') or not self.done:
+            try:
+                k = screen.getch()
+
+                if chr(k)=='w':
+                    a = 0
+                if chr(k)=='x':
+                    a = 1
+                if chr(k)=='a':
+                    a = 2
+                if chr(k)=='d':
+                    a = 3
+                if chr(k)=='s':
+                    a = 8
+
+                G.step(a)
+                G.render()
+
+                if self.done:
+                    print "Torque bound breached"
+                    1/0
+                
+                # screen.addch(k)
+                screen.refresh()
+            except ValueError:
+                curses.endwin()
+            
+        curses.endwin()
+
+    def plots(self):
+        ax1 = plt.subplot(221)
+        ax1.plot(np.array(self.track_T).reshape(-1,1),np.array(self.track_f).reshape(-1,2))    
+        ax1.set(xlabel='Time', ylabel='Tendon forces')
+        ax1.set_ylim([0,400])
+
+        ax2 = plt.subplot(222)
+        ax2.plot(np.array(self.track_T).reshape(-1,1),np.array(self.track_state)[:,4:6].reshape(-1,2))    
+        ax2.set(xlabel='Time', ylabel='Object position')
+        ax2.set_ylim([0,1.2])
+
+        ax3 = plt.subplot(223)
+        ax3.plot(np.array(self.track_T).reshape(-1,1),np.array(self.track_state)[:,12:14].reshape(-1,2))    
+        ax3.set(xlabel='Time', ylabel='Object velocity')
+        # ax3.set_ylim([0,1.2])
+
+        ax4 = plt.subplot(224)
+        ax4.plot(np.array(self.track_state)[:,4],np.array(self.track_state)[:,5])    
+        ax4.set(xlabel='x', ylabel='y')
+        # ax3.set_ylim([0,1.2])
+
+        plt.show()
+
 
 if __name__ == '__main__':
     
     G = AdaptiveGripperEnv()
 
     G.reset()
-        
-    for i in range(1000):
-        G.step()
-        G.render()
-        
 
+    # G.key_control()
+
+    print "-------"
+    
+    while G.t < 20:
+        if G.t < 15:
+            action = 0#np.random.randint(8)
+        else:
+            if G.t < 6:
+                action = 8
+            else:
+                action = 8
+        _, done = G.step(action)
+        G.render()
+
+        if done:
+            print('Torque bound breached at time %f.' % G.t)
+            time.sleep(2)
+            break
+    
     G.close()
+
+    G.plots()
+
+    print G.x.reshape(-1,14)
+    
+
