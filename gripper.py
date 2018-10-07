@@ -2,10 +2,12 @@
 
 import math
 import numpy as np
-from matrices import get_matrices
 import time
 from gym.envs.classic_control import rendering
 import matplotlib.pyplot as plt
+from matrices_full import get_matrices_full
+from matrices import get_matrices
+
 
 
 class AdaptiveGripperEnv():
@@ -34,7 +36,7 @@ class AdaptiveGripperEnv():
 
     R = np.array([[-1, 0], [-0.5, 0], [0, 1], [0, 0.5]])/10 # Maps tendon forces to joint torques
     Q = np.array([[200, 0], [0, 200]]) # Maps actuator angles to tendon forces
-    A = np.array([[1, 1], [-1, -1], [-1, 1], [1, -1], [0, -1], [0, 1], [-1, 0], [1, 0], [0, 0]])*0.0001 # Set of possible_actions
+    A = np.array([[1, 1], [-1, -1], [-1, 1], [1, -1], [0, -1], [0, 1], [-1, 0], [1, 0], [0, 0]])*0.00001 # Set of possible_actions
 
     n = 14
     dt = 0.01
@@ -63,9 +65,9 @@ class AdaptiveGripperEnv():
 
         if not self.system_reset:
             # self.x = np.concatenate( (np.deg2rad(np.array([-0, -10, 0, 10])), np.array([0, 0.9939, 0, 0, 0, 0, 0, 0, 0, 0])), axis=0 ) # [q1 q2 q1 q2 x y th dq1 dq2 dq1 dq2 dx dy dth]
-            self.x = np.array([0.116946826907781,	-0.473091924745941,	-0.116946826907779,	0.473091924745943,	0,	0.970793044282852,	0,	0,	0,	0,	0,	0,	0,	0]) # [q1 q2 q1 q2 x y th dq1 dq2 dq1 dq2 dx dy dth]
-            self.tendon_forces = np.array([0.0, 0.0])
-            self.thetas = np.array([0.03,0.03])
+            self.x = np.array([0.130814782138007,	-0.509077071631031,	-0.130814782138005,	0.509077071631033,	0,	0.966588936434075,	0,	0,	0,	0,	0,	0,	0,	0]) # [q1 q2 q1 q2 x y th dq1 dq2 dq1 dq2 dx dy dth]
+            self.tendon_forces = np.array([60.0, 60.0])
+            self.thetas = np.array([0.3,0.3])
 
             self.t = 0
             self.done = False
@@ -79,6 +81,7 @@ class AdaptiveGripperEnv():
 
     def ODEfunc(self, t, x, dthetas):
 
+        # Dt, Ct, Gt, Ft, Gmap, self.ee, Jee, dJG = get_matrices_full(x, self.l_links, self.m_link, self.mo, self.Io, self.ro, self.c, self.K, self.z, self.a) # Slow matrices computations
         Dt, Ct, Gt, Ft, Gmap, self.ee, Jee, dJG = get_matrices(x, self.l_links, self.m_link, self.mo, self.Io, self.ro, self.c, self.K, self.z, self.a)
 
         self.thetas += dthetas
@@ -104,7 +107,7 @@ class AdaptiveGripperEnv():
 
         dthetas = self.A[action]
 
-        for i in range(2): # Each step is 2*dt time
+        for i in range(1): # Each step is n*dt time
             if self.EulerOrRK == 'Euler': # Euler method
                 df = self.ODEfunc(self.t, self.x, dthetas)
 
@@ -129,7 +132,7 @@ class AdaptiveGripperEnv():
         self.track_T.append(self.t)
         self.track_f.append(self.tendon_forces)
 
-        print(self.t, self.thetas.reshape((-1,2)), self.observe().reshape(-1,5), d)
+        # print(self.t, self.thetas.reshape((-1,2)), self.observe().reshape(-1,5), d)
         return self.observe(), self.done
 
     def observe(self):
@@ -327,7 +330,7 @@ class AdaptiveGripperEnv():
         ax2 = plt.subplot(222)
         ax2.plot(np.array(self.track_T).reshape(-1,1),np.array(self.track_state)[:,4:6].reshape(-1,2))    
         ax2.set(xlabel='Time', ylabel='Object position')
-        ax2.set_ylim([0,1.2])
+        # ax2.set_ylim([0,1.2])
 
         ax3 = plt.subplot(223)
         ax3.plot(np.array(self.track_T).reshape(-1,1),np.array(self.track_state)[:,12:14].reshape(-1,2))    
@@ -348,19 +351,27 @@ if __name__ == '__main__':
 
     G.reset()
 
+    # _, done = G.step(0)
+    # for i in range(100):
+    #     _,done = G.step(2)
+
     # G.key_control()
 
     print "-------"
     
+    st = time.time()
     while G.t < 20:
-        if G.t < 15:
-            action = 0#np.random.randint(8)
+        if G.t < 10:
+            action = 2#np.random.randint(8)
         else:
-            if G.t < 6:
-                action = 8
+            if G.t < 20:
+                action = 1
             else:
                 action = 8
+
+        
         _, done = G.step(action)
+        # 
         G.render()
 
         if done:
@@ -368,10 +379,11 @@ if __name__ == '__main__':
             time.sleep(2)
             break
     
+    print("step time: ", time.time()-st)
     G.close()
 
     G.plots()
 
-    print G.x.reshape(-1,14)
+    # print G.x.reshape(-1,14)
     
 
