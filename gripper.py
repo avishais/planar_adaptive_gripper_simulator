@@ -13,18 +13,17 @@ from matrices import get_matrices
 class AdaptiveGripperEnv():
 
     # Gripper properties
-    m_link = 10 # Links masss
-    K = np.array([1, 2]) # Finger spring coefficients
-    c = np.array([20, 20]) # Natural damping of the joints
+    m_link = 100 # Links masss
+    K = np.array([10, 20]) # Finger spring coefficients
+    c = np.array([25, 25]) # Natural damping of the joints
     l_links = np.array([0.6, 0.4]) # Lengths of the two links of a finger
     a = np.array([-0.2+0.0305, 0.2-0.0305]) # First joints position on the base
     z = np.deg2rad([30, -5, -30, 5]) # Springs pre-loading angles of the joints
 
     # Object properties
-    mo = 10 # Object mass
-    Io = 1 # Object inertia
+    mo = 100 # Object mass
+    Io = 10 # Object inertia
     ro = 0.1 # Object radius
-
 
     # Fail criteria
     u_min = 0.1
@@ -35,8 +34,8 @@ class AdaptiveGripperEnv():
 
 
     R = np.array([[-1, 0], [-0.5, 0], [0, 1], [0, 0.5]])/10 # Maps tendon forces to joint torques
-    Q = np.array([[200, 0], [0, 200]]) # Maps actuator angles to tendon forces
-    A = np.array([[1, 1], [-1, -1], [-1, 1], [1, -1], [0, -1], [0, 1], [-1, 0], [1, 0], [0, 0]])*0.00001 # Set of possible_actions
+    Q = np.array([[2000, 0], [0, 2000]]) # Maps actuator angles to tendon forces
+    A = np.array([[1, 1], [-1, -1], [-1, 1], [1, -1], [0, -1], [0, 1], [-1, 0], [1, 0], [0, 0]])*0.00002 # Set of possible_actions
 
     n = 14
     dt = 0.01
@@ -65,9 +64,9 @@ class AdaptiveGripperEnv():
 
         if not self.system_reset:
             # self.x = np.concatenate( (np.deg2rad(np.array([-0, -10, 0, 10])), np.array([0, 0.9939, 0, 0, 0, 0, 0, 0, 0, 0])), axis=0 ) # [q1 q2 q1 q2 x y th dq1 dq2 dq1 dq2 dx dy dth]
-            self.x = np.array([0.130814782138007,	-0.509077071631031,	-0.130814782138005,	0.509077071631033,	0,	0.966588936434075,	0,	0,	0,	0,	0,	0,	0,	0]) # [q1 q2 q1 q2 x y th dq1 dq2 dq1 dq2 dx dy dth]
-            self.tendon_forces = np.array([60.0, 60.0])
-            self.thetas = np.array([0.3,0.3])
+            self.x = np.array([0.0448790923493863,	-0.288268315358574,	-0.0448790923493863,	0.288268315358574,	0,	0.987482396155299,	0,	0,	0,	0,	0,	0,	0,	0]) # [q1 q2 q1 q2 x y th dq1 dq2 dq1 dq2 dx dy dth]
+            self.tendon_forces = np.array([200.0, 200.0])
+            self.thetas = np.array([0.1,0.1])
 
             self.t = 0
             self.done = False
@@ -351,21 +350,15 @@ if __name__ == '__main__':
 
     G.reset()
 
-    # _, done = G.step(0)
-    # for i in range(100):
-    #     _,done = G.step(2)
-
     # G.key_control()
 
-    print "-------"
-    
     st = time.time()
     while G.t < 20:
         if G.t < 10:
-            action = 2#np.random.randint(8)
+            action = 0#np.random.randint(8)
         else:
             if G.t < 20:
-                action = 1
+                action = 2
             else:
                 action = 8
 
